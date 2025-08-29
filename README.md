@@ -18,7 +18,7 @@
 
 ## 🧩 Architecture at a Glance
 
-```mermaid
+```
 flowchart LR
     A[User Question] --> B[Plan]
     B --> C[Search]
@@ -223,7 +223,3 @@ Key sections in the script:
 * [BeautifulSoup](https://www.crummy.com/software/BeautifulSoup/)
 
 ---
-
-## 📄 License
-
-Choose a license (e.g., MIT) and add it here.
