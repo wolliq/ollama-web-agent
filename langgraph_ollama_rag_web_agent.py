@@ -48,6 +48,9 @@ from ddgs import DDGS  # renamed package of duckduckgo_search
 from pydantic import BaseModel
 from rich import print
 
+import ollama
+from loguru import logger
+
 # Try FAISS (optional)
 try:  # pragma: no cover
     import faiss  # type: ignore
@@ -56,6 +59,233 @@ except Exception:  # noqa: BLE001
 
 # LangGraph core
 from langgraph.graph import StateGraph, END
+
+# pip install pydantic>=2.0
+from pydantic import BaseModel, Field
+from typing import Tuple, Literal
+from html import unescape as html_unescape
+import re
+import unicodedata
+
+class CleanResult(BaseModel):
+    text: str
+    original_bytes: int
+    cleaned_bytes: int
+    truncated: bool
+    removed_control_chars: int
+    removed_zero_width: int
+    stripped_html: bool
+    normalized: str
+    emojis_handled: int
+
+class EmbeddingCleaner(BaseModel):
+    """
+    End-to-end text cleaner wrapped in a single Pydantic class.
+    Adds robust emoji handling to avoid embedding errors.
+
+    emoji_policy:
+      - "keep"     -> leave emojis as-is
+      - "remove"   -> delete emojis (and related modifiers)
+      - "describe" -> replace each emoji with a short :snake_case_name:
+    """
+    # ---- Config ----
+    normalize_form: str = Field(default="NFC", description="Unicode normalization form")
+    strip_html: bool = Field(default=False, description="Strip HTML tags/entities")
+    collapse_whitespace: bool = Field(default=True, description="Collapse repeated whitespace")
+    preserve_newlines: bool = Field(default=True, description="Keep line breaks")
+    max_bytes: int = Field(default=800_000, ge=1, description="UTF-8 byte ceiling")
+    keep_tabs: bool = Field(default=True, description="Keep \\t; otherwise convert via whitespace collapse")
+    emoji_policy: Literal["keep", "remove", "describe"] = Field(default="keep", description="How to handle emojis")
+
+    # ---- Precompiled regex (class-level) ----
+    TAG_RE: re.Pattern = Field(
+        default=re.compile(r"<[^>]+>"),
+        exclude=True
+    )
+    # Zero-width & directional marks, BOM, and VARIATION SELECTORS (FE0E-FE0F)
+    ZERO_WIDTH_RE: re.Pattern = Field(
+        default=re.compile(
+            "["                 
+            "\u200B-\u200F"     # ZWSP/ZWNJ/ZWJ/LRM/RLM
+            "\u202A-\u202E"     # LRE/RLE/PDF/LRO/RLO
+            "\u2060-\u206F"     # word joiner etc.
+            "\uFE0E-\uFE0F"     # text/emoji variation selectors
+            "\uFEFF"            # BOM/ZWNBSP
+            "]"
+        ),
+        exclude=True
+    )
+    # Broad emoji coverage (base pictographs, dingbats, emoticons, flags, etc.)
+    EMOJI_BASE_RE: re.Pattern = Field(
+        default=re.compile(
+            "("
+            "[\U0001F1E6-\U0001F1FF]{2}"             # flags (regional indicators pair)
+            "|[\U0001F600-\U0001F64F]"               # emoticons
+            "|[\U0001F300-\U0001F5FF]"               # misc symbols & pictographs
+            "|[\U0001F680-\U0001F6FF]"               # transport & map
+            "|[\U0001F700-\U0001F77F]"               # alchemical
+            "|[\U0001F780-\U0001F7FF]"               # geometric ext
+            "|[\U0001F800-\U0001F8FF]"               # supplemental arrows-C
+            "|[\U0001F900-\U0001F9FF]"               # supplemental symbols & pictographs
+            "|[\U0001FA00-\U0001FAFF]"               # symbols & pictographs ext-A
+            "|[\u2600-\u26FF]"                        # misc symbols
+            "|[\u2700-\u27BF]"                        # dingbats
+            ")"
+        ),
+        exclude=True
+    )
+    # Skin tone modifiers (if present, remove/ignore them when handling)
+    EMOJI_SKIN_TONE_RE: re.Pattern = Field(
+        default=re.compile(r"[\U0001F3FB-\U0001F3FF]"),
+        exclude=True
+    )
+
+    model_config = {
+        "arbitrary_types_allowed": True,  # allow compiled regex fields
+        "validate_assignment": True
+    }
+
+    # ---- Public API ----
+    def clean(self, text: str) -> CleanResult:
+        original_bytes = len(text.encode("utf-8", errors="ignore"))
+
+        # 1) Unicode normalize
+        t = unicodedata.normalize(self.normalize_form, text)
+
+        # 2) Strip zero-width/variation selectors/BOM
+        before = len(t)
+        t = self.ZERO_WIDTH_RE.sub("", t)
+        removed_zero_width = before - len(t)
+
+        # 3) Optionally strip HTML
+        stripped_html_flag = False
+        if self.strip_html:
+            t2 = self._strip_html(t)
+            stripped_html_flag = (t2 != t)
+            t = t2
+
+        # 4) Emoji handling
+        t, emojis_handled = self._handle_emojis(t, policy=self.emoji_policy)
+
+        # 5) Neutralize control/surrogate/unassigned chars (keep \n/\t if configured)
+        t, removed_controls = self._neutralize_controls(
+            t, preserve_newlines=self.preserve_newlines, keep_tabs=self.keep_tabs
+        )
+
+        # 6) Collapse whitespace (while preserving line structure if enabled)
+        if self.collapse_whitespace:
+            t = self._collapse_ws(t, preserve_newlines=self.preserve_newlines)
+
+        # 7) Enforce UTF-8 byte limit
+        t, truncated = self._truncate_utf8(t, self.max_bytes)
+
+        cleaned_bytes = len(t.encode("utf-8", errors="strict"))
+
+        return CleanResult(
+            text=t,
+            original_bytes=original_bytes,
+            cleaned_bytes=cleaned_bytes,
+            truncated=truncated,
+            removed_control_chars=removed_controls,
+            removed_zero_width=removed_zero_width,
+            stripped_html=stripped_html_flag,
+            normalized=self.normalize_form,
+            emojis_handled=emojis_handled,
+        )
+
+    # ---- Helpers ----
+    def _strip_html(self, s: str) -> str:
+        s = html_unescape(s)
+        return self.TAG_RE.sub(" ", s)
+
+    def _is_allowed_control(self, ch: str, preserve_newlines: bool, keep_tabs: bool) -> bool:
+        if ch == "\n" and preserve_newlines:
+            return True
+        if ch == "\t" and keep_tabs:
+            return True
+        return False
+
+    def _neutralize_controls(
+        self, s: str, preserve_newlines: bool, keep_tabs: bool
+    ) -> Tuple[str, int]:
+        removed = 0
+        out_chars = []
+        for ch in s:
+            cat = unicodedata.category(ch)
+            if cat.startswith("C"):  # Control, Surrogate, Unassigned
+                if self._is_allowed_control(ch, preserve_newlines, keep_tabs):
+                    out_chars.append(ch)
+                else:
+                    out_chars.append(" ")
+                    removed += 1
+            else:
+                out_chars.append(ch)
+        return "".join(out_chars), removed
+
+    def _collapse_ws(self, s: str, preserve_newlines: bool) -> str:
+        if preserve_newlines:
+            s = s.replace("\r\n", "\n").replace("\r", "\n")
+            lines = [" ".join(line.split()) for line in s.split("\n")]
+            s = "\n".join(lines)
+            s = re.sub(r"\n{3,}", r"\n\n", s)
+            return s.strip()
+        else:
+            return " ".join(s.split())
+
+    def _truncate_utf8(self, s: str, max_bytes: int) -> Tuple[str, bool]:
+        b = s.encode("utf-8", errors="strict")
+        if len(b) <= max_bytes:
+            return s, False
+        cut = b[:max_bytes]
+        safe = cut.decode("utf-8", errors="ignore")  # drop partial multibyte tail
+        return safe, True
+
+    # --- Emoji handling ---
+    def _handle_emojis(self, s: str, policy: str) -> Tuple[str, int]:
+        if policy == "keep":
+            # Still strip variation selectors (already done) & skin tones to stabilize graphemes if desired
+            # but we keep base emoji; only remove explicit tone marks if they appear as stray chars
+            cleaned = self.EMOJI_SKIN_TONE_RE.sub("", s)
+            handled = 0 if cleaned == s else len(self.EMOJI_SKIN_TONE_RE.findall(s))
+            return cleaned, handled
+
+        def describe_match(m: re.Match) -> str:
+            token = m.group(0)
+            # Remove skin-tone modifiers inside the token for cleaner names
+            base = self.EMOJI_SKIN_TONE_RE.sub("", token)
+            # Try to produce a readable :snake_case_name:
+            # For flags (pair of regional indicators), compress to ":flag_<xx>:" when possible
+            if len(base) == 2 and all(0x1F1E6 <= ord(c) <= 0x1F1FF for c in base):
+                # Convert regional indicators to country code
+                cc = "".join(chr(ord(c) - 0x1F1E6 + ord('A')) for c in base).lower()
+                return f":flag_{cc}:"
+            # Fallback to Unicode name of first char
+            ch = base[0]
+            try:
+                name = unicodedata.name(ch).lower().replace(" ", "_")
+                # Some names include "face", "hand", etc.; keep concise
+                return f":{name}:"
+            except ValueError:
+                return ":emoji:"
+
+        if policy == "remove":
+            matches = self.EMOJI_BASE_RE.findall(s)
+            handled = len(matches)
+            # Remove both base emoji and any skin-tone modifiers
+            no_tone = self.EMOJI_SKIN_TONE_RE.sub("", s)
+            cleaned = self.EMOJI_BASE_RE.sub("", no_tone)
+            return cleaned, handled
+
+        if policy == "describe":
+            # Replace base emoji with names, drop tone modifiers
+            before = s
+            s = self.EMOJI_SKIN_TONE_RE.sub("", s)
+            cleaned = self.EMOJI_BASE_RE.sub(describe_match, s)
+            handled = len(self.EMOJI_BASE_RE.findall(before))
+            return cleaned, handled
+
+        # Unknown policy fallback: keep
+        return s, 0
 
 # -----------------------------
 # Ollama simple client helpers
@@ -81,12 +311,28 @@ def ollama_chat(model: str, messages: List[Dict[str, str]], temperature: float =
 
 def ollama_embed(model: str, texts: List[str]) -> np.ndarray:
     """Call Ollama embeddings API for each text and stack into (n, d) array."""
-    url = f"{OLLAMA_HOST}/api/embeddings"
+    
+    if "" == model:
+        model: str = "nomic-embed-text"
+        
+    # url = f"{OLLAMA_HOST}/api/embeddings"
     out: List[np.ndarray] = []
     for t in texts:
-        r = requests.post(url, json={"model": model, "prompt": t}, timeout=120)
-        r.raise_for_status()
-        out.append(np.array(r.json()["embedding"], dtype=np.float32))
+        cleaner_remove = EmbeddingCleaner(strip_html=True, max_bytes=10_000, emoji_policy="remove")
+        t = cleaner_remove.clean(t).text[:300]  # cap per chunk
+        
+        logger.debug(f"Embedding text (cleaned, {len(t)}): {t})")
+        
+        try:
+            r = ollama.embeddings(model=model, prompt=t)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Error getting embedding from Ollama: {e}")
+            continue    
+        
+        logger.debug(f"Received embedding: {r}")
+        # r = requests.post(url, json={"model": model, "prompt": t}, timeout=120)
+        # r.raise_for_status()
+        out.append(np.array(r, dtype=np.float32))
     return np.vstack(out) if out else np.zeros((0, 0), dtype=np.float32)
 
 
