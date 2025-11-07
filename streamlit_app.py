@@ -7,6 +7,7 @@ Run with:
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -21,6 +22,28 @@ class AgentResult:
     sources: List[str]
     plan: List[str]
     iterations: int
+
+
+def authenticate(username: str, password: str) -> bool:
+    expected_user = os.getenv("STREAMLIT_USERNAME", "admin")
+    expected_pass = os.getenv("STREAMLIT_PASSWORD", "changeme")
+    return username == expected_user and password == expected_pass
+
+
+def render_login() -> None:
+    st.title("🔐 Agentic Web Researcher")
+    st.caption("Please sign in to run web research jobs.")
+    with st.form("login_form", clear_on_submit=False):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Log in", type="primary")
+        if submitted:
+            if authenticate(username.strip(), password):
+                st.session_state.authenticated = True
+                st.success("Login successful. Loading app…")
+                raise st.rerun()
+            else:
+                st.error("Invalid credentials. Please try again.")
 
 
 def run_agent(question: str, model: str, embed_model: str, max_iters: int) -> AgentResult:
@@ -52,6 +75,13 @@ st.set_page_config(
     layout="wide",
 )
 
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    render_login()
+    st.stop()
+
 st.title("🕸️ Agentic Web Researcher")
 st.caption(
     "Plan → search → fetch → chunk → embed → retrieve → answer with optional reflection. "
@@ -63,6 +93,9 @@ with st.sidebar:
     llm_model = st.text_input("Chat model", value="llama3.2:3b")
     embed_model = st.text_input("Embedding model", value="qwen3-embedding:0.6b")
     max_iters = st.slider("Max reflect iterations", min_value=1, max_value=4, value=2)
+    if st.button("Log out", use_container_width=True):
+        st.session_state.authenticated = False
+        raise st.rerun()
 
 question = st.text_area(
     "Ask anything:",
