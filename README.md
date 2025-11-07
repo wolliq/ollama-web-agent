@@ -9,6 +9,7 @@
 * **Agentic loop** with a reflect pass (plan → search → fetch → chunk → retrieve → answer → *reflect*).
 * **Small-model friendly**: tested with local models like `llama3.2:3b`, `qwen2.5:3b`, `phi3:mini`.
 * **Embeddings via Ollama** (default `qwen3-embedding:0.6b`, but any local embed model works).
+* **Optional Streamlit UI** for point-and-click research sessions.
 * **Web search** using the actively maintained **`ddgs`** package (the successor to `duckduckgo_search`).
 * **Vector search** with **FAISS** if available, otherwise a NumPy cosine fallback.
 * **Clean streaming** and **safe routing**: no `__end__` write errors; event snapshots rehydrated into Pydantic state.
@@ -53,15 +54,23 @@ flowchart LR
 
 ### Install
 
-Use pip or uv (for faster and cooler packaging handler) :D .
+Use pip or **uv** (fast Python package/venv manager).
 
 ```bash
-# Core
-pip install -U langgraph langchain-core ddgs beautifulsoup4 requests numpy pydantic rich
+# Using uv (creates .venv automatically and reads pyproject.toml)
+uv venv
+source .venv/bin/activate
+uv pip install -e .
+# (Alternatively: uv pip install -r requirements.txt)
 
-# Optional (faster vector search)
-pip install faiss-cpu
+# Using pip directly (mirrors requirements.txt pins)
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
+
+> ℹ️ Dependencies are pinned so they play nicely with common ecosystem tools
+> (e.g., `langchain-qdrant` needs `langchain-core<0.3`, `numba` needs `numpy<2.2`).
 
 ### Pull models with Ollama
 
@@ -97,6 +106,18 @@ python langgraph_ollama_rag_web_agent.py \
 **Environment**
 
 * `OLLAMA_HOST` (optional) → defaults to `http://localhost:11434`
+
+---
+
+## 🖥️ Streamlit UI
+
+Prefer an interactive interface? Launch the Streamlit dashboard:
+
+```bash
+streamlit run streamlit_app.py
+```
+
+Use the sidebar to pick chat/embedding models, tune retrieval knobs, and fire questions without touching the CLI. The UI calls the same underlying agent pipeline, so requirements are identical (Ollama running locally plus the pulled models).
 
 ---
 
