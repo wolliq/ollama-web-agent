@@ -8,7 +8,7 @@
 
 * **Agentic loop** with a reflect pass (plan → search → fetch → chunk → retrieve → answer → *reflect*).
 * **Small-model friendly**: tested with local models like `llama3.2:3b`, `qwen2.5:3b`, `phi3:mini`.
-* **Embeddings via Ollama** (e.g., `nomic-embed-text`).
+* **Embeddings via Ollama** (default `qwen3-embedding:0.6b`, but any local embed model works).
 * **Web search** using the actively maintained **`ddgs`** package (the successor to `duckduckgo_search`).
 * **Vector search** with **FAISS** if available, otherwise a NumPy cosine fallback.
 * **Clean streaming** and **safe routing**: no `__end__` write errors; event snapshots rehydrated into Pydantic state.
@@ -72,7 +72,7 @@ ollama pull llama3.2:3b
 # or: ollama pull phi3:mini
 
 # Embedding model
-ollama pull nomic-embed-text
+ollama pull qwen3-embedding:0.6b
 ```
 
 ---
@@ -82,7 +82,7 @@ ollama pull nomic-embed-text
 ```bash
 python langgraph_ollama_rag_web_agent.py \
   --model llama3.2:3b \
-  --embed-model nomic-embed-text \
+  --embed-model qwen3-embedding:0.6b \
   --question "What are the key differences between ARM and x86 for laptop efficiency?" \
   --max-iters 2
 ```
@@ -90,7 +90,7 @@ python langgraph_ollama_rag_web_agent.py \
 **CLI options**
 
 * `--model` → Ollama chat model (default `llama3.2:3b`)
-* `--embed-model` → Ollama embedding model (default `nomic-embed-text`)
+* `--embed-model` → Ollama embedding model (default `qwen3-embedding:0.6b`)
 * `--question` → your research question *(required)*
 * `--max-iters` → reflect loop budget (default `2`, minimum `1`)
 
@@ -143,7 +143,7 @@ for event in app.stream(state, stream_mode="values"):
 → You can install `faiss-cpu` or switch to the NumPy-based vector index variant (see alternative implementation in README notes or adapt code to a fallback).
 
 **No vectors / Empty embeddings**
-→ Ensure `ollama pull nomic-embed-text` and that the embedding endpoint is reachable.
+→ Ensure `ollama pull qwen3-embedding:0.6b` and that the embedding endpoint is reachable.
 
 ---
 
@@ -175,7 +175,7 @@ for m in "phi3:mini" "qwen2.5:3b" "llama3.2:3b"; do
   echo "\n===== $m ====="
   python langgraph_ollama_rag_web_agent.py \
     --model "$m" \
-    --embed-model nomic-embed-text \
+    --embed-model qwen3-embedding:0.6b \
     --question "What are the key differences between ARM and x86 for laptop efficiency?" \
     --max-iters 2
 done

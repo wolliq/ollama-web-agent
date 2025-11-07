@@ -14,7 +14,7 @@ Key fixes & choices in this refactor:
 Prereqs
 -------
 1) **Ollama** installed & running locally: https://ollama.com
-   - Pull your models, e.g.: `ollama pull llama3.2:3b` and `ollama pull nomic-embed-text`
+   - Pull your models, e.g.: `ollama pull llama3.2:3b` and `ollama pull qwen3-embedding:0.6b`
 2) Python deps:
    ```bash
    pip install -U langgraph langchain-core ddgs beautifulsoup4 requests numpy pydantic rich
@@ -27,7 +27,7 @@ Run
 ```bash
 python langgraph_ollama_rag_web_agent.py \
   --model llama3.2:3b \
-  --embed-model nomic-embed-text \
+  --embed-model qwen3-embedding:0.6b \
   --question "What are the key differences between ARM and x86 for laptop efficiency?" \
   --max-iters 2
 ```
@@ -386,7 +386,7 @@ def build_graph(llm_model: str, embed_model: str, max_iters: int = 2):
 def main():
     parser = argparse.ArgumentParser(description="LangGraph + Ollama agentic RAG web search")
     parser.add_argument("--model", default="llama3.2:3b", help="Ollama chat model")
-    parser.add_argument("--embed-model", default="nomic-embed-text", help="Ollama embedding model")
+    parser.add_argument("--embed-model", default="qwen3-embedding:0.6b", help="Ollama embedding model")
     parser.add_argument("--question", required=True, help="User question to research")
     parser.add_argument("--max-iters", type=int, default=2, help="Max reflect cycles (>=1)")
     args = parser.parse_args()
