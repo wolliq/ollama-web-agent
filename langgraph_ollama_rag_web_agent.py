@@ -38,7 +38,6 @@ import argparse
 import json
 import os
 import re
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -114,8 +113,7 @@ def chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> List[str
     return chunks
 
 
-@dataclass
-class DocChunk:
+class DocChunk(BaseModel):
     url: str
     title: str
     chunk: str

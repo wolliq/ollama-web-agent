@@ -8,16 +8,15 @@ Run with:
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from typing import List, Optional
 
 import streamlit as st
+from pydantic import BaseModel
 
 from langgraph_ollama_rag_web_agent import AgentState, build_graph
 
 
-@dataclass
-class AgentResult:
+class AgentResult(BaseModel):
     answer: str
     sources: List[str]
     plan: List[str]
