@@ -89,12 +89,14 @@ ollama pull qwen3-embedding:0.6b
 ## 🚀 Quick Start
 
 ```bash
-python langgraph_ollama_rag_web_agent.py \
+python streamlit_app.py --cli \
   --model llama3.2:3b \
   --embed-model qwen3-embedding:0.6b \
   --question "What are the key differences between ARM and x86 for laptop efficiency?" \
   --max-iters 2
 ```
+
+Add the `--cli` switch whenever you run the script directly to bypass the Streamlit runtime and execute the agent pipeline headlessly.
 
 **CLI options**
 
@@ -194,7 +196,7 @@ Quick shell loop to compare models on the same question:
 ```bash
 for m in "phi3:mini" "qwen2.5:3b" "llama3.2:3b"; do
   echo "\n===== $m ====="
-  python langgraph_ollama_rag_web_agent.py \
+  python streamlit_app.py --cli \
     --model "$m" \
     --embed-model qwen3-embedding:0.6b \
     --question "What are the key differences between ARM and x86 for laptop efficiency?" \
@@ -210,7 +212,7 @@ Capture outputs to files and review source coverage and answer concision.
 
 Single file (as requested):
 
-* `langgraph_ollama_rag_web_agent.py` → all logic in one place.
+* `streamlit_app.py` → houses the Streamlit UI, LangGraph agent, and optional CLI mode (`--cli`).
 
 Key sections in the script:
 
@@ -220,7 +222,7 @@ Key sections in the script:
 * **State** (`AgentState`)
 * **Nodes** (plan, search, fetch, chunk, answer, reflect)
 * **Graph builder** (`build_graph`)
-* **Runner** (`main`)
+* **Runtimes** (`run_streamlit_ui`, `run_cli`)
 
 ---
 
